@@ -1,26 +1,40 @@
-use std::cell::RefCell;
 use std::ptr;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
+use gtk::gdk::Display;
+use include_dir::{include_dir, Dir};
 use tokio::runtime::Runtime;
 
 use evdev::uinput::VirtualDeviceBuilder;
 use evdev::{AttributeSet, EventType, InputEvent, Key};
 use gilrs::{Axis, Button, Gamepad, GilrsBuilder};
 
-use gio::{glib, prelude::*};
-use gtk::{prelude::*, Application};
+use gtk::gio::{glib, prelude::*};
+use gtk::{prelude::*, Application, CssProvider};
 use gtk4_layer_shell::{Edge, Layer, LayerShell};
 
-mod femtovg_area;
-use femtovg_area::FemtoVGArea;
+mod display_widgets;
+use display_widgets::RadialMenu;
 
 const APP_ID: &str = "bug.junelva.padmixer";
-// static RES: Dir = include_dir!("$CARGO_MANIFEST_DIR/res");
+static RES: Dir = include_dir!("$CARGO_MANIFEST_DIR/res");
 
 fn runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| Runtime::new().expect("Setting up tokio runtime needs to succeed."))
+}
+
+fn load_css() {
+    // Load the CSS file and add it to the provider
+    let provider = CssProvider::new();
+    provider.load_from_string(RES.get_file("style.css").unwrap().contents_utf8().unwrap());
+
+    // Add the provider to the default screen
+    gtk::style_context_add_provider_for_display(
+        &Display::default().expect("Could not connect to a display."),
+        &provider,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
 }
 
 fn main() -> glib::ExitCode {
@@ -40,7 +54,9 @@ fn main() -> glib::ExitCode {
     });
 
     let app = Application::builder().application_id(APP_ID).build();
+    app.connect_startup(|_| load_css());
     app.connect_activate(build_ui);
+
     app.run()
 }
 
@@ -259,7 +275,7 @@ fn axis_to_bcs(axis: Axis) -> CommonAnalog {
 fn build_ui(app: &Application) {
     // let (sender, receiver) = async_channel::unbounded::<BasicControlState();
     let bcs = BasicControllerState::default();
-    let bcs = RefCell::new(bcs);
+    let bcs = RwLock::new(bcs);
 
     let mut keyset = AttributeSet::<Key>::new();
     let keys = [
@@ -286,13 +302,27 @@ fn build_ui(app: &Application) {
     println!("hi from input initialization");
     let mut gilrs = GilrsBuilder::new().set_update_state(false).build().unwrap();
 
+    // window surface
     let window = gtk::ApplicationWindow::new(app);
+    let window_native = window.native().unwrap();
+    {
+        let surface = window_native.surface();
+        if surface.is_some() {
+            let surface = surface.unwrap();
+            let input_region = gtk::cairo::Region::create();
+            surface.set_input_region(&input_region);
+        } else {
+            println!("oh no! too early");
+        }
+    }
+    // let input_region = gtk::cairo::Region::create();
+    // surface.set_input_region(&input_region);
     window.set_title(Some("BUG // padmixer"));
     window.init_layer_shell();
     window.set_layer(Layer::Overlay);
-    window.set_opacity(0.8);
+    // window.set_opacity(1.0);
     window.set_size_request(380, 380);
-    window.set_can_target(false);
+    // window.set_can_target(false);
     window.set_margin(Edge::Bottom, 40);
     window.set_margin(Edge::Right, 40);
     let anchors = [
@@ -305,20 +335,31 @@ fn build_ui(app: &Application) {
         window.set_anchor(anchor, state);
     }
 
-    let femtoview = FemtoVGArea::default();
-    femtoview.set_size_request(380, 380);
-    window.set_child(Some(&femtoview));
+    let radial = RadialMenu::default();
+    radial.set_size_request(380, 380);
+    window.set_child(Some(&radial));
     window.present();
 
+    {
+        let surface = window_native.surface();
+
+        if surface.is_some() {
+            let surface = surface.unwrap();
+            let input_region = gtk::cairo::Region::create();
+            surface.set_input_region(&input_region);
+        } else {
+            println!("oh no! too late");
+        }
+    }
+
     runtime().spawn({
-        let bcs = bcs.clone();
         async move {
             let mut current_gamepad = None;
             loop {
                 while let Some(event) = gilrs.next_event_blocking(None) {
                     gilrs.update(&event);
                     if current_gamepad.is_none() {
-                        let mut bcs = bcs.borrow_mut();
+                        let mut bcs = bcs.write().unwrap();
                         match event.event {
                             gilrs::EventType::ButtonPressed(button, _code) => {
                                 bcs.try_update_button(button_to_bcs(button), 1.0)

@@ -5,13 +5,12 @@ use std::{
 };
 
 use femtovg::CompositeOperation;
-// use gio::glib::Properties;
 use gtk::glib::subclass::prelude::*;
 use gtk::{glib, glib::Properties, prelude::*, subclass::prelude::*};
 
 #[derive(Properties)]
-#[properties(wrapper_type = super::FemtoVGArea)]
-pub struct FemtoVGArea {
+#[properties(wrapper_type = super::RadialMenu)]
+pub struct RadialMenu {
     canvas: RefCell<Option<femtovg::Canvas<femtovg::renderer::OpenGl>>>,
     start_time: Cell<Instant>,
     #[property(set, type = f32, default = 0.0)]
@@ -20,7 +19,7 @@ pub struct FemtoVGArea {
     y: RefCell<f32>,
 }
 
-impl Default for FemtoVGArea {
+impl Default for RadialMenu {
     fn default() -> Self {
         Self {
             canvas: Default::default(),
@@ -32,13 +31,13 @@ impl Default for FemtoVGArea {
 }
 
 #[glib::object_subclass]
-impl ObjectSubclass for FemtoVGArea {
-    const NAME: &'static str = "FemtoVGArea";
-    type Type = super::FemtoVGArea;
+impl ObjectSubclass for RadialMenu {
+    const NAME: &'static str = "RadialMenu";
+    type Type = super::RadialMenu;
     type ParentType = gtk::GLArea;
 }
 
-impl ObjectImpl for FemtoVGArea {
+impl ObjectImpl for RadialMenu {
     fn constructed(&self) {
         self.parent_constructed();
         let area = self.obj();
@@ -50,7 +49,7 @@ impl ObjectImpl for FemtoVGArea {
     }
 }
 
-impl WidgetImpl for FemtoVGArea {
+impl WidgetImpl for RadialMenu {
     fn realize(&self) {
         self.parent_realize();
         self.start_time.set(Instant::now());
@@ -62,7 +61,7 @@ impl WidgetImpl for FemtoVGArea {
     }
 }
 
-impl GLAreaImpl for FemtoVGArea {
+impl GLAreaImpl for RadialMenu {
     fn resize(&self, width: i32, height: i32) {
         self.ensure_canvas();
         let mut canvas = self.canvas.borrow_mut();
@@ -104,7 +103,7 @@ impl GLAreaImpl for FemtoVGArea {
     }
 }
 
-impl FemtoVGArea {
+impl RadialMenu {
     fn ensure_canvas(&self) {
         use femtovg::{renderer, Canvas};
         use glow::HasContext;
