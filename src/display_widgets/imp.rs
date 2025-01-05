@@ -13,10 +13,10 @@ use gtk::{glib, glib::Properties, prelude::*, subclass::prelude::*};
 pub struct RadialMenu {
     canvas: RefCell<Option<femtovg::Canvas<femtovg::renderer::OpenGl>>>,
     start_time: Cell<Instant>,
-    #[property(set, type = f32, default = 0.0)]
-    x: RefCell<f32>,
-    #[property(set, type = f32, default = 0.0)]
-    y: RefCell<f32>,
+    #[property(set, type = f32)]
+    px: RefCell<f32>,
+    #[property(set, type = f32)]
+    py: RefCell<f32>,
 }
 
 impl Default for RadialMenu {
@@ -24,8 +24,8 @@ impl Default for RadialMenu {
         Self {
             canvas: Default::default(),
             start_time: Cell::new(Instant::now()),
-            x: RefCell::new(0.0),
-            y: RefCell::new(0.0),
+            px: RefCell::new(0.0),
+            py: RefCell::new(0.0),
         }
     }
 }
@@ -89,14 +89,21 @@ impl GLAreaImpl for RadialMenu {
         canvas.translate(w as f32 / 2., h as f32 / 2.);
 
         let mut path = Path::new();
-        path.circle(0.0, 0.0, 180.0);
+        path.circle(0.0, 0.0, self.start_time.get().elapsed().as_secs_f32());
         path.close();
-
-        // let r = (n - DEFAULT_N as f32) / (MAX_N - DEFAULT_N) as f32;
-        // canvas.fill_path(&path, &Paint::color(Color::rgba(0, 255, 0, 128)));
         let mut paint = Paint::color(Color::rgba(128, 128, 225, 128));
         paint.set_line_width(4.);
         canvas.stroke_path(&path, &paint);
+
+        let mut path = Path::new();
+        path.circle(*self.px.borrow() * 120.0, *self.py.borrow() * 120.0, 40.0);
+        path.close();
+        let mut paint = Paint::color(Color::rgba(178, 178, 225, 178));
+        paint.set_line_width(2.);
+        canvas.stroke_path(&path, &paint);
+
+        // let r = (n - DEFAULT_N as f32) / (MAX_N - DEFAULT_N) as f32;
+        // canvas.fill_path(&path, &Paint::color(Color::rgba(0, 255, 0, 128)));
         canvas.flush();
 
         glib::Propagation::Stop

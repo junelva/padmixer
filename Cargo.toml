@@ -8,7 +8,6 @@ description = "Bind, visualize, and redirect input devices."
 [dependencies]
 evdev = "0.12.2"
 gilrs = "0.11.0"
-# gio = "0.20.7"
 gtk = { package = "gtk4", version = "0.9.5", features = ["v4_12"] }
 gtk4-layer-shell = "0.4.0"
 tokio = { version = "1.42.0", features = ["rt", "rt-multi-thread"] }
@@ -20,3 +19,4 @@ epoxy = { version = "0.1.0" }
 
 libloading = { version = "0.8.6" }
 include_dir = "0.7.4"
+async-channel = "2.3.1"

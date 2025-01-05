@@ -20,9 +20,12 @@ impl Default for RadialMenu {
 }
 
 impl RadialMenu {
-    pub fn update_values(&mut self, bcs: RwLock<BasicControllerState>) {
-        let analogs = bcs.read().unwrap().analogs;
-        self.set_property_from_value("X", &Value::from(analogs[3].value));
-        self.set_property_from_value("Y", &Value::from(analogs[4].value));
+    pub fn update_values(&mut self, px: f32, py: f32) {
+        println!("updating properties on the thing...");
+        // let analogs = bcs.analogs;
+        let px = &Value::from(px);
+        let py = &Value::from(py);
+        self.set_property_from_value("px", px);
+        self.set_property_from_value("py", py);
     }
 }
