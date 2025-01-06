@@ -50,6 +50,13 @@ fn main() -> glib::ExitCode {
 
     // prepare virtual keyboard (prototype style)
     let mut keyset = AttributeSet::<Key>::new();
+    keyset.insert(Key::KEY_1);
+    keyset.insert(Key::KEY_2);
+    keyset.insert(Key::KEY_H);
+    keyset.insert(Key::KEY_M);
+    keyset.insert(Key::KEY_N);
+    keyset.insert(Key::KEY_ESC);
+    keyset.insert(Key::KEY_RIGHTSHIFT);
     let mut keys = [
         ("_", Key::KEY_SPACE, (0.0, 0.0)),
         ("j", Key::KEY_J, (0.0, 0.0)),
@@ -133,10 +140,29 @@ fn main() -> glib::ExitCode {
 
                 let gp = gilrs.gamepad(current_gamepad.unwrap());
                 let st = gp.state();
-                let but_x = st.button_data(Gamepad::button_code(&gp, Button::West).unwrap());
-                if but_x.is_some() {
-                    let but_x = but_x.unwrap();
-                    if but_x.is_pressed() {
+
+                let but_start = st.button_data(Gamepad::button_code(&gp, Button::Start).unwrap());
+                if but_start.is_some() {
+                    let but_start = but_start.unwrap();
+                    if but_start.is_pressed() {
+                        let ie = InputEvent::new(EventType::KEY, Key::KEY_ESC.code(), 1);
+                        let res = vd.emit(&[ie]);
+                        if res.is_err() {
+                            println!("{:?}", res);
+                        }
+                    } else {
+                        let ie = InputEvent::new(EventType::KEY, Key::KEY_ESC.code(), 0);
+                        let res = vd.emit(&[ie]);
+                        if res.is_err() {
+                            println!("{:?}", res);
+                        }
+                    }
+                }
+
+                let but_y = st.button_data(Gamepad::button_code(&gp, Button::North).unwrap());
+                if but_y.is_some() {
+                    let but_y = but_y.unwrap();
+                    if but_y.is_pressed() {
                         let ie = InputEvent::new(EventType::KEY, Key::KEY_H.code(), 1);
                         let res = vd.emit(&[ie]);
                         if res.is_err() {
@@ -151,10 +177,74 @@ fn main() -> glib::ExitCode {
                     }
                 }
 
+                let but_a = st.button_data(Gamepad::button_code(&gp, Button::South).unwrap());
+                if but_a.is_some() {
+                    let but_a = but_a.unwrap();
+                    if but_a.is_pressed() {
+                        let ie = InputEvent::new(EventType::KEY, Key::KEY_SPACE.code(), 1);
+                        let res = vd.emit(&[ie]);
+                        if res.is_err() {
+                            println!("{:?}", res);
+                        }
+                    } else {
+                        let ie = InputEvent::new(EventType::KEY, Key::KEY_SPACE.code(), 0);
+                        let res = vd.emit(&[ie]);
+                        if res.is_err() {
+                            println!("{:?}", res);
+                        }
+                    }
+                }
+
+                let but_x = st.button_data(Gamepad::button_code(&gp, Button::West).unwrap());
+                if but_x.is_some() {
+                    let but_x = but_x.unwrap();
+                    if but_x.is_pressed() {
+                        let ie = InputEvent::new(EventType::KEY, Key::KEY_1.code(), 1);
+                        let res = vd.emit(&[ie]);
+                        if res.is_err() {
+                            println!("{:?}", res);
+                        }
+                    } else {
+                        let ie = InputEvent::new(EventType::KEY, Key::KEY_1.code(), 0);
+                        let res = vd.emit(&[ie]);
+                        if res.is_err() {
+                            println!("{:?}", res);
+                        }
+                    }
+                }
+
                 // here we do the keys on the radial menu
                 let bcs = bcs.read().unwrap();
-                let rs_x = bcs.analogs[3].value;
-                let rs_y = bcs.analogs[4].value;
+                let rs_x = bcs
+                    .analog_state_by_type(types::CommonAnalog::RightStickX)
+                    .value;
+                let rs_y = bcs
+                    .analog_state_by_type(types::CommonAnalog::RightStickY)
+                    .value;
+
+                // let rs_z = bcs
+                //     .analog_state_by_type(types::CommonAnalog::RightLever)
+                //     .value;
+                // if rs_z > 0.9 {
+                //     let ie = InputEvent::new(EventType::KEY, Key::KEY_RIGHTCTRL.code(), 0);
+                //     let res = vd.emit(&[ie]);
+                //     if res.is_err() {
+                //         println!("{:?}", res);
+                // }
+                // if rs_z > 0.4 {
+                //     let ie = InputEvent::new(EventType::KEY, Key::KEY_RIGHTSHIFT.code(), 0);
+                //     let res = vd.emit(&[ie]);
+                //     if res.is_err() {
+                //         println!("{:?}", res);
+                //     }
+                // } else {
+                //     let ie = InputEvent::new(EventType::KEY, Key::KEY_RIGHTSHIFT.code(), 1);
+                //     let res = vd.emit(&[ie]);
+                //     if res.is_err() {
+                //         println!("{:?}", res);
+                //     }
+                // }
+
                 if (f32::abs(rs_x) + f32::abs(rs_y)) > 0.5 {
                     // calculate nearest coordinate in keys mapping
                     // println!("are we pressing a key with the radial menu yet");

@@ -173,11 +173,52 @@ pub struct StateButton {
 #[allow(dead_code)]
 #[derive(Copy, Clone)]
 pub struct BasicControllerState {
-    pub analogs: [StateAnalog; 6],
-    pub buttons: [StateButton; 15],
+    pub analogs: [StateAnalog; 9],
+    pub buttons: [StateButton; 22],
 }
 
 impl BasicControllerState {
+    pub fn button_state_by_type(&self, by: CommonButton) -> StateButton {
+        match by {
+            CommonButton::LeftStickPress => self.buttons[0],
+            CommonButton::RightStickPress => self.buttons[1],
+            CommonButton::LeftShoulder => self.buttons[2],
+            CommonButton::RightShoulder => self.buttons[3],
+            CommonButton::FaceSouth => self.buttons[4],
+            CommonButton::FaceEast => self.buttons[5],
+            CommonButton::FaceWest => self.buttons[6],
+            CommonButton::FaceNorth => self.buttons[7],
+            CommonButton::DPadSouth => self.buttons[8],
+            CommonButton::DPadEast => self.buttons[9],
+            CommonButton::DPadWest => self.buttons[10],
+            CommonButton::DPadNorth => self.buttons[11],
+            CommonButton::Start => self.buttons[12],
+            CommonButton::Select => self.buttons[13],
+            CommonButton::Guide => self.buttons[14],
+            CommonButton::LegacyC => self.buttons[15],
+            CommonButton::LegacyZ => self.buttons[16],
+            CommonButton::LegacyLT => self.buttons[17],
+            CommonButton::LegacyLT2 => self.buttons[18],
+            CommonButton::LegacyRT => self.buttons[19],
+            CommonButton::LegacyRT2 => self.buttons[20],
+            CommonButton::Unknown => self.buttons[21],
+        }
+    }
+
+    pub fn analog_state_by_type(&self, by: CommonAnalog) -> StateAnalog {
+        match by {
+            CommonAnalog::LeftStickX => self.analogs[0],
+            CommonAnalog::LeftStickY => self.analogs[1],
+            CommonAnalog::LeftLever => self.analogs[2],
+            CommonAnalog::RightStickX => self.analogs[3],
+            CommonAnalog::RightStickY => self.analogs[4],
+            CommonAnalog::RightLever => self.analogs[5],
+            CommonAnalog::DPadX => self.analogs[6],
+            CommonAnalog::DPadY => self.analogs[7],
+            CommonAnalog::Unknown => self.analogs[8],
+        }
+    }
+
     pub fn try_update_button(&mut self, ty: CommonButton, value: f32) {
         for button in self.buttons.iter_mut() {
             if button.ty == ty {
@@ -221,6 +262,18 @@ impl Default for BasicControllerState {
                 },
                 StateAnalog {
                     ty: CommonAnalog::RightLever,
+                    value: 0.0,
+                },
+                StateAnalog {
+                    ty: CommonAnalog::DPadX,
+                    value: 0.0,
+                },
+                StateAnalog {
+                    ty: CommonAnalog::DPadY,
+                    value: 0.0,
+                },
+                StateAnalog {
+                    ty: CommonAnalog::Unknown,
                     value: 0.0,
                 },
             ],
@@ -283,6 +336,34 @@ impl Default for BasicControllerState {
                 },
                 StateButton {
                     ty: CommonButton::Guide,
+                    value: 0.0,
+                },
+                StateButton {
+                    ty: CommonButton::LegacyC,
+                    value: 0.0,
+                },
+                StateButton {
+                    ty: CommonButton::LegacyZ,
+                    value: 0.0,
+                },
+                StateButton {
+                    ty: CommonButton::LegacyLT,
+                    value: 0.0,
+                },
+                StateButton {
+                    ty: CommonButton::LegacyLT2,
+                    value: 0.0,
+                },
+                StateButton {
+                    ty: CommonButton::LegacyRT,
+                    value: 0.0,
+                },
+                StateButton {
+                    ty: CommonButton::LegacyRT2,
+                    value: 0.0,
+                },
+                StateButton {
+                    ty: CommonButton::Unknown,
                     value: 0.0,
                 },
             ],
