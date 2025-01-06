@@ -51,7 +51,7 @@ fn main() -> glib::ExitCode {
     // prepare virtual keyboard (prototype style)
     let mut keyset = AttributeSet::<Key>::new();
     let mut keys = [
-        ("h", Key::KEY_H, (0.0, 0.0)),
+        ("_", Key::KEY_SPACE, (0.0, 0.0)),
         ("j", Key::KEY_J, (0.0, 0.0)),
         ("k", Key::KEY_K, (0.0, 0.0)),
         ("y", Key::KEY_Y, (0.0, 0.0)),
@@ -82,7 +82,6 @@ fn main() -> glib::ExitCode {
     let radial_x = store.insert("radial_x", 0.0);
     let radial_y = store.insert("radial_y", 0.0);
     let arc_store = Arc::new(Mutex::new(store));
-    let mut current_radial_key_held = Key::KEY_UNKNOWN;
 
     // personal logic loop that waits for pad input
     let mut runtime_store_binding = arc_store.clone();
@@ -91,7 +90,7 @@ fn main() -> glib::ExitCode {
         let mut gilrs = GilrsBuilder::new().set_update_state(false).build().unwrap();
         let mut current_gamepad = None;
         loop {
-            println!("polling input...");
+            // println!("polling input...");
             while let Some(event) = gilrs.next_event_blocking(None) {
                 gilrs.update(&event);
                 current_gamepad = Some(event.id);
@@ -114,10 +113,10 @@ fn main() -> glib::ExitCode {
                         let mut store = store.lock().unwrap();
                         if axis == Axis::RightStickX {
                             store.get("radial_x").replace(Box::new(value), &mut store);
-                            println!("insert to radial_x in store: {}", value);
+                            // println!("insert to radial_x in store: {}", value);
                         } else if axis == Axis::RightStickY {
                             store.get("radial_y").replace(Box::new(value), &mut store);
-                            println!("insert to radial_y in store: {}", value);
+                            // println!("insert to radial_y in store: {}", value);
                         }
                         bcs.try_update_analog(axis_to_bcs(axis), value);
                     }
@@ -158,7 +157,7 @@ fn main() -> glib::ExitCode {
                 let rs_y = bcs.analogs[4].value;
                 if (f32::abs(rs_x) + f32::abs(rs_y)) > 0.5 {
                     // calculate nearest coordinate in keys mapping
-                    println!("are we pressing a key with the radial menu yet");
+                    // println!("are we pressing a key with the radial menu yet");
                     let mut nearest = Key::KEY_UNKNOWN;
                     let mut nearest_distance = 4.0;
                     for key in keys.iter() {
@@ -167,14 +166,22 @@ fn main() -> glib::ExitCode {
                             f32::powf(co.0 - rs_x, 2.0) + f32::powf(co.1 - rs_y, 2.0),
                         ));
                         if distance < nearest_distance {
-                            println!("co {:?} dist {} {}", co, distance, key.0);
+                            // println!("co {:?} dist {} {}", co, distance, key.0);
                             nearest_distance = distance;
                             nearest = key.1;
                         }
                     }
                     if nearest != Key::KEY_UNKNOWN {
-                        println!("well, it is something");
-                        current_radial_key_held = nearest;
+                        // println!("well, it is something");
+                        // release every key in the binding
+                        for key in keys {
+                            let ie = InputEvent::new(EventType::KEY, key.1.code(), 0);
+                            let res = vd.emit(&[ie]);
+                            if res.is_err() {
+                                println!("{:?}", res);
+                            }
+                        }
+
                         let ie = InputEvent::new(EventType::KEY, nearest.code(), 1);
                         let res = vd.emit(&[ie]);
                         if res.is_err() {
@@ -182,10 +189,12 @@ fn main() -> glib::ExitCode {
                         }
                     }
                 } else {
-                    let ie = InputEvent::new(EventType::KEY, current_radial_key_held.code(), 0);
-                    let res = vd.emit(&[ie]);
-                    if res.is_err() {
-                        println!("{:?}", res);
+                    for key in keys {
+                        let ie = InputEvent::new(EventType::KEY, key.1.code(), 0);
+                        let res = vd.emit(&[ie]);
+                        if res.is_err() {
+                            println!("{:?}", res);
+                        }
                     }
                 }
             }
@@ -217,8 +226,8 @@ fn main() -> glib::ExitCode {
         window.init_layer_shell();
         window.set_layer(Layer::Overlay);
         window.set_size_request(380, 380);
-        window.set_margin(Edge::Bottom, 40);
-        window.set_margin(Edge::Right, 40);
+        window.set_margin(Edge::Bottom, 200);
+        window.set_margin(Edge::Right, 200);
         let anchors = [
             (Edge::Left, false),
             (Edge::Top, false),
@@ -244,7 +253,7 @@ fn main() -> glib::ExitCode {
             if let Some(new_x) = x_opt {
                 x = *new_x;
             } else {
-                println!("x might be nothing");
+                // println!("x might be nothing");
             }
 
             let mut y = 0.0;
@@ -253,7 +262,7 @@ fn main() -> glib::ExitCode {
             if let Some(new_y) = y_opt {
                 y = *new_y;
             } else {
-                println!("y might be nothing");
+                // println!("y might be nothing");
             }
 
             wdg.set_x(x);

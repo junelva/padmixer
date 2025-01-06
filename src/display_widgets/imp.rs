@@ -4,7 +4,7 @@ use std::{
     time::Instant,
 };
 
-use femtovg::{Align, Baseline, CompositeOperation};
+use femtovg::{Align, Baseline, CompositeOperation, FontId};
 use gtk::glib::subclass::prelude::*;
 use gtk::{glib, glib::Properties, prelude::*, subclass::prelude::*};
 
@@ -14,6 +14,7 @@ use crate::RES;
 #[properties(wrapper_type = super::RadialMenu)]
 pub struct RadialMenu {
     canvas: RefCell<Option<femtovg::Canvas<femtovg::renderer::OpenGl>>>,
+    font: RefCell<Option<FontId>>,
     start_time: Cell<Instant>,
     #[property(name = "labels", set, type = String)]
     labels: RefCell<String>,
@@ -27,6 +28,7 @@ impl Default for RadialMenu {
     fn default() -> Self {
         Self {
             canvas: Default::default(),
+            font: Default::default(),
             start_time: Cell::new(Instant::now()),
             labels: RefCell::new(String::new()),
             x: RefCell::new(0.0),
@@ -115,22 +117,20 @@ impl GLAreaImpl for RadialMenu {
         paint.set_line_width(2.);
         canvas.stroke_path(&path, &paint);
 
-        let font = canvas
-            .add_font_mem(RES.get_file("NotoSansMono-Bold.ttf").unwrap().contents())
-            .expect("Cannot add font");
-        let paint = Paint::color(Color::rgb(255, 255, 255))
-            .with_font(&[font])
-            .with_text_baseline(Baseline::Middle)
-            .with_text_align(Align::Center)
-            .with_font_size(w as f32 / 8.0);
-
-        let txt_radius = outer_radius;
-        let len = (*self.labels.borrow()).len() as f32;
-        for (i, ch) in (*self.labels.borrow()).char_indices() {
-            let theta = std::f64::consts::TAU as f32 * (i as f32 / len);
-            let x = txt_radius * f32::cos(theta);
-            let y = txt_radius * f32::sin(theta);
-            let _ = canvas.fill_text(x, y, ch.to_string().as_str(), &paint);
+        if self.font.borrow().is_some() {
+            let paint = Paint::color(Color::rgb(255, 255, 255))
+                .with_font(&[self.font.borrow().unwrap()])
+                .with_text_baseline(Baseline::Middle)
+                .with_text_align(Align::Center)
+                .with_font_size(w as f32 / 8.0);
+            let txt_radius = outer_radius;
+            let len = (*self.labels.borrow()).len() as f32;
+            for (i, ch) in (*self.labels.borrow()).char_indices() {
+                let theta = std::f64::consts::TAU as f32 * (i as f32 / len);
+                let x = txt_radius * f32::cos(theta);
+                let y = txt_radius * f32::sin(theta);
+                let _ = canvas.fill_text(x, -y, ch.to_string().as_str(), &paint);
+            }
         }
 
         canvas.flush();
@@ -165,7 +165,12 @@ impl RadialMenu {
             (renderer, glow::NativeFramebuffer(id))
         };
         renderer.set_screen_target(Some(fbo));
-        let canvas = Canvas::new(renderer).expect("Cannot create canvas");
+        let mut canvas = Canvas::new(renderer).expect("Cannot create canvas");
+        let font = canvas
+            .add_font_mem(RES.get_file("NotoSansMono-Bold.ttf").unwrap().contents())
+            .expect("Cannot add font");
+
+        self.font.replace(Some(font));
         self.canvas.replace(Some(canvas));
     }
 
