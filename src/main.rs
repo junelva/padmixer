@@ -3,7 +3,6 @@ use std::ptr;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use gtk::gdk::Display;
-use gtk::glib::subclass::Signal;
 use include_dir::{include_dir, Dir};
 use tokio::runtime::Runtime;
 
@@ -19,12 +18,10 @@ mod display_widgets;
 use display_widgets::RadialMenu;
 
 mod types;
-use types::ValueStore;
+use types::{axis_to_bcs, button_to_bcs, BasicControllerState, ValueStore};
 
 const APP_ID: &str = "bug.junelva.padmixer";
 static RES: Dir = include_dir!("$CARGO_MANIFEST_DIR/res");
-
-static SIGNALS: OnceLock<Vec<Signal>> = OnceLock::new();
 
 fn runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
@@ -51,25 +48,27 @@ fn main() -> glib::ExitCode {
     let bcs = BasicControllerState::default();
     let bcs = RwLock::new(bcs);
 
-    let mut store = ValueStore::new();
-    let radial_x = store.insert("radial_x", 50.0);
-    let radial_y = store.insert("radial_y", 0.0);
-    let arc_store = Arc::new(Mutex::new(store));
-
     // prepare virtual keyboard (prototype style)
     let mut keyset = AttributeSet::<Key>::new();
-    let keys = [
-        ("h", Key::KEY_H),
-        ("j", Key::KEY_J),
-        ("k", Key::KEY_K),
-        ("y", Key::KEY_Y),
-        ("u", Key::KEY_U),
-        ("i", Key::KEY_I),
-        ("o", Key::KEY_O),
-        ("p", Key::KEY_P),
+    let mut keys = [
+        ("h", Key::KEY_H, (0.0, 0.0)),
+        ("j", Key::KEY_J, (0.0, 0.0)),
+        ("k", Key::KEY_K, (0.0, 0.0)),
+        ("y", Key::KEY_Y, (0.0, 0.0)),
+        ("u", Key::KEY_U, (0.0, 0.0)),
+        ("i", Key::KEY_I, (0.0, 0.0)),
+        ("o", Key::KEY_O, (0.0, 0.0)),
+        ("p", Key::KEY_P, (0.0, 0.0)),
     ];
-    for key in keys.iter() {
+    let mut keys_string = String::new();
+    let len = keys.len() as f32;
+    for (i, key) in keys.iter_mut().enumerate() {
+        keys_string.push_str(key.0);
         keyset.insert(key.1);
+        let theta = std::f64::consts::TAU as f32 * (i as f32 / len);
+        let x = f32::cos(theta);
+        let y = f32::sin(theta);
+        key.2 = (x, y);
     }
     let mut vd = VirtualDeviceBuilder::new()
         .expect("vd new")
@@ -79,9 +78,14 @@ fn main() -> glib::ExitCode {
         .build()
         .expect("vd build");
 
+    let mut store = ValueStore::new();
+    let radial_x = store.insert("radial_x", 0.0);
+    let radial_y = store.insert("radial_y", 0.0);
+    let arc_store = Arc::new(Mutex::new(store));
+    let mut current_radial_key_held = Key::KEY_UNKNOWN;
+
     // personal logic loop that waits for pad input
     let mut runtime_store_binding = arc_store.clone();
-    // let runtime_store = *runtime_store_binding.lock().unwrap();
     runtime().spawn(async move {
         println!("spawned input thread...");
         let mut gilrs = GilrsBuilder::new().set_update_state(false).build().unwrap();
@@ -125,6 +129,9 @@ fn main() -> glib::ExitCode {
                 }
             }
             if current_gamepad.is_some() {
+                // here is the basic prototype of button remapping to keyboard.
+                // pad 'x' or 'y' (mappings vary) sends KEY_H.
+
                 let gp = gilrs.gamepad(current_gamepad.unwrap());
                 let st = gp.state();
                 let but_x = st.button_data(Gamepad::button_code(&gp, Button::West).unwrap());
@@ -144,47 +151,55 @@ fn main() -> glib::ExitCode {
                         }
                     }
                 }
+
+                // here we do the keys on the radial menu
+                let bcs = bcs.read().unwrap();
+                let rs_x = bcs.analogs[3].value;
+                let rs_y = bcs.analogs[4].value;
+                if (f32::abs(rs_x) + f32::abs(rs_y)) > 0.5 {
+                    // calculate nearest coordinate in keys mapping
+                    println!("are we pressing a key with the radial menu yet");
+                    let mut nearest = Key::KEY_UNKNOWN;
+                    let mut nearest_distance = 4.0;
+                    for key in keys.iter() {
+                        let co = key.2;
+                        let distance = f32::abs(f32::sqrt(
+                            f32::powf(co.0 - rs_x, 2.0) + f32::powf(co.1 - rs_y, 2.0),
+                        ));
+                        if distance < nearest_distance {
+                            println!("co {:?} dist {} {}", co, distance, key.0);
+                            nearest_distance = distance;
+                            nearest = key.1;
+                        }
+                    }
+                    if nearest != Key::KEY_UNKNOWN {
+                        println!("well, it is something");
+                        current_radial_key_held = nearest;
+                        let ie = InputEvent::new(EventType::KEY, nearest.code(), 1);
+                        let res = vd.emit(&[ie]);
+                        if res.is_err() {
+                            println!("{:?}", res);
+                        }
+                    }
+                } else {
+                    let ie = InputEvent::new(EventType::KEY, current_radial_key_held.code(), 0);
+                    let res = vd.emit(&[ie]);
+                    if res.is_err() {
+                        println!("{:?}", res);
+                    }
+                }
             }
-            // let b = *bcs.read().unwrap();
-            // let mut store_borrow = store.borrow_mut();
-            // let store = store_borrow.deref_mut();
-            // vs.get("x").repl
-            // let res = tx.send(b).await;
-            // if res.is_err() {};
         }
     });
-
-    // #[derive(Copy, Clone)]
-    // struct UIValues {
-    //     x: f32,
-    //     y: f32,
-    // }
-    // let rasync =
-    //     Arc::<Mutex<Box<UIValues>>>::new(Mutex::new(Box::new(UIValues { x: 0.0, y: 0.0 })));
-    // let rv = rasync.clone();
-    // runtime().spawn({
-    // let rx = rx.clone();
-    // println!("spawned ui update thread...");
-    // let radial = rasync.lock().unwrap();
-    //     async move {
-    //         if let Ok(rec) = rx.recv().await {
-    //             let mut rv = rv.lock().unwrap();
-    //             // let rv = rv.borrow_mut();
-    //             rv.x = rec.analogs[3].value;
-    //             rv.y = rec.analogs[4].value;
-    //             // rv = &mut [rec.analogs[3].value, rec.analogs[4].value];
-    //             // rv[0] = rec.analogs[3].value;
-    //             // rv[1] = rec.analogs[4].value;
-    //         }
-    //     }
-    // });
 
     let app = Application::builder().application_id(APP_ID).build();
     app.connect_startup(|_| {
         // load gtk css. using this style to hide window backdrop
+        //
         // window {
         //     background-color: rgba(0, 0, 0, 0);
         // }
+        //
         let provider = CssProvider::new();
         provider.load_from_string(RES.get_file("style.css").unwrap().contents_utf8().unwrap());
         gtk::style_context_add_provider_for_display(
@@ -193,23 +208,6 @@ fn main() -> glib::ExitCode {
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
     });
-
-    // runtime().spawn(async {
-    //     read_notify.notified().await;
-    //     let store = arc_store.clone();
-    //     let store = store.lock().unwrap();
-    //     let x_value = radial_x.lock().unwrap();
-    //     let x_opt = x_value.load(&store).as_any().downcast_ref::<f32>();
-    //     if let Some(new_x) = x_opt {
-    //         xbox = Box::new(*new_x);
-    //     }
-
-    //     let y_value = radial_y.lock().unwrap();
-    //     let y_opt = y_value.load(&store).as_any().downcast_ref::<f32>();
-    //     if let Some(new_y) = y_opt {
-    //         ybox = Box::new(*new_y);
-    //     }
-    // });
 
     app.connect_activate(move |app| {
         // window surface
@@ -231,34 +229,13 @@ fn main() -> glib::ExitCode {
             window.set_anchor(anchor, state);
         }
 
-        // radial.connect_closure(
-        //     "update-input-vectors",
-        //     false,
-        //     closure_local!(move |x: f32, y: f32| {
-        //         println!("these values are in the ui activate function. {}, {}", x, y);
-        //     }),
-        // );
-        // radial.set_x(50.0);
-        // radial.set_y(0.0);
-        // let store = ui_store_binding.lock().unwrap();
-        // let x = store
-        //     .get("radial_x")
-        //     .load(&store)
-        //     .as_any()
-        //     .downcast_ref::<f32>()
-        //     .unwrap();
-        // let y = store
-        //     .get("radial_y")
-        //     .load(&store)
-        //     .as_any()
-        //     .downcast_ref::<f32>()
-        //     .unwrap();
         let radial = RadialMenu::default();
+        radial.set_labels(&*keys_string);
         let rxc = radial_x.clone();
         let ryc = radial_y.clone();
         let store = arc_store.clone();
         radial.add_tick_callback(move |wdg, _clk| {
-            // area.queue_render();
+            // .queue_render() is automatic for GLArea.
             let store = store.lock().unwrap();
 
             let mut x = 0.0;
@@ -284,7 +261,6 @@ fn main() -> glib::ExitCode {
 
             glib::ControlFlow::Continue
         });
-        // radial.add_tick_callback(move || {});
 
         window.set_child(Some(&radial));
         window.present();
@@ -299,256 +275,6 @@ fn main() -> glib::ExitCode {
             println!("unable to disallow input region due to lack of surface on window");
         }
     });
+
     app.run()
-}
-
-// fn initialize_app(app: &Application) {
-//     // window surface
-//     let window = gtk::ApplicationWindow::new(app);
-//     let window_native = window.native().unwrap();
-//     window.set_title(Some("padmixer (in-development build)"));
-//     window.init_layer_shell();
-//     window.set_layer(Layer::Overlay);
-//     window.set_size_request(380, 380);
-//     window.set_margin(Edge::Bottom, 40);
-//     window.set_margin(Edge::Right, 40);
-//     let anchors = [
-//         (Edge::Left, false),
-//         (Edge::Top, false),
-//         (Edge::Right, true),
-//         (Edge::Bottom, true),
-//     ];
-//     for (anchor, state) in anchors {
-//         window.set_anchor(anchor, state);
-//     }
-
-//     // let sig = Signal::builder("update-widget")
-//     //     .param_types([SignalType::from(Type::F32), SignalType::from(Type::F32)])
-//     //     .build();
-
-//     let radial = RadialMenu::default();
-//     window.set_child(Some(&radial));
-//     window.present();
-
-//     let surface = window_native.surface();
-
-//     if surface.is_some() {
-//         let surface = surface.unwrap();
-//         let input_region = gtk::cairo::Region::create();
-//         surface.set_input_region(&input_region);
-//     } else {
-//         println!("unable to disallow input region due to lack of surface on window");
-//     }
-// }
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum CommonAnalog {
-    LeftStickX,
-    LeftStickY,
-    LeftLever,
-    RightStickX,
-    RightStickY,
-    RightLever,
-    DPadX,
-    DPadY,
-    Unknown,
-}
-
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum CommonButton {
-    LeftStickPress,
-    RightStickPress,
-    LeftShoulder,
-    RightShoulder,
-    FaceSouth,
-    FaceEast,
-    FaceWest,
-    FaceNorth,
-    DPadSouth,
-    DPadEast,
-    DPadWest,
-    DPadNorth,
-    Start,
-    Select,
-    Guide,
-    LegacyC,
-    LegacyZ,
-    LegacyLT,
-    LegacyLT2,
-    LegacyRT,
-    LegacyRT2,
-    Unknown,
-}
-
-#[allow(dead_code)]
-#[derive(Copy, Clone)]
-struct StateAnalog {
-    ty: CommonAnalog,
-    value: f32,
-}
-
-#[allow(dead_code)]
-#[derive(Copy, Clone)]
-struct StateButton {
-    ty: CommonButton,
-    value: f32,
-}
-
-#[allow(dead_code)]
-#[derive(Copy, Clone)]
-pub struct BasicControllerState {
-    analogs: [StateAnalog; 6],
-    buttons: [StateButton; 15],
-}
-
-impl BasicControllerState {
-    fn try_update_button(&mut self, ty: CommonButton, value: f32) {
-        for button in self.buttons.iter_mut() {
-            if button.ty == ty {
-                button.value = value;
-            }
-        }
-    }
-
-    fn try_update_analog(&mut self, ty: CommonAnalog, value: f32) {
-        for analog in self.analogs.iter_mut() {
-            if analog.ty == ty {
-                analog.value = value;
-            }
-        }
-    }
-}
-
-impl Default for BasicControllerState {
-    fn default() -> Self {
-        Self {
-            analogs: [
-                StateAnalog {
-                    ty: CommonAnalog::LeftStickX,
-                    value: 0.0,
-                },
-                StateAnalog {
-                    ty: CommonAnalog::LeftStickY,
-                    value: 0.0,
-                },
-                StateAnalog {
-                    ty: CommonAnalog::LeftLever,
-                    value: 0.0,
-                },
-                StateAnalog {
-                    ty: CommonAnalog::RightStickX,
-                    value: 0.0,
-                },
-                StateAnalog {
-                    ty: CommonAnalog::RightStickY,
-                    value: 0.0,
-                },
-                StateAnalog {
-                    ty: CommonAnalog::RightLever,
-                    value: 0.0,
-                },
-            ],
-            buttons: [
-                StateButton {
-                    ty: CommonButton::LeftStickPress,
-                    value: 0.0,
-                },
-                StateButton {
-                    ty: CommonButton::RightStickPress,
-                    value: 0.0,
-                },
-                StateButton {
-                    ty: CommonButton::LeftShoulder,
-                    value: 0.0,
-                },
-                StateButton {
-                    ty: CommonButton::RightShoulder,
-                    value: 0.0,
-                },
-                StateButton {
-                    ty: CommonButton::FaceSouth,
-                    value: 0.0,
-                },
-                StateButton {
-                    ty: CommonButton::FaceEast,
-                    value: 0.0,
-                },
-                StateButton {
-                    ty: CommonButton::FaceWest,
-                    value: 0.0,
-                },
-                StateButton {
-                    ty: CommonButton::FaceNorth,
-                    value: 0.0,
-                },
-                StateButton {
-                    ty: CommonButton::DPadSouth,
-                    value: 0.0,
-                },
-                StateButton {
-                    ty: CommonButton::DPadEast,
-                    value: 0.0,
-                },
-                StateButton {
-                    ty: CommonButton::DPadWest,
-                    value: 0.0,
-                },
-                StateButton {
-                    ty: CommonButton::DPadNorth,
-                    value: 0.0,
-                },
-                StateButton {
-                    ty: CommonButton::Start,
-                    value: 0.0,
-                },
-                StateButton {
-                    ty: CommonButton::Select,
-                    value: 0.0,
-                },
-                StateButton {
-                    ty: CommonButton::Guide,
-                    value: 0.0,
-                },
-            ],
-        }
-    }
-}
-
-fn button_to_bcs(button: Button) -> CommonButton {
-    match button {
-        Button::South => CommonButton::FaceSouth,
-        Button::East => CommonButton::FaceEast,
-        Button::North => CommonButton::FaceNorth,
-        Button::West => CommonButton::FaceWest,
-        Button::Select => CommonButton::Select,
-        Button::Start => CommonButton::Start,
-        Button::Mode => CommonButton::Guide,
-        Button::LeftThumb => CommonButton::LeftStickPress,
-        Button::RightThumb => CommonButton::RightStickPress,
-        Button::DPadUp => CommonButton::DPadNorth,
-        Button::DPadDown => CommonButton::DPadSouth,
-        Button::DPadLeft => CommonButton::DPadWest,
-        Button::DPadRight => CommonButton::DPadEast,
-        Button::C => CommonButton::LegacyC,
-        Button::Z => CommonButton::LegacyZ,
-        Button::LeftTrigger => CommonButton::LegacyLT,
-        Button::LeftTrigger2 => CommonButton::LegacyLT2,
-        Button::RightTrigger => CommonButton::LegacyRT,
-        Button::RightTrigger2 => CommonButton::LegacyRT2,
-        Button::Unknown => CommonButton::Unknown,
-    }
-}
-
-fn axis_to_bcs(axis: Axis) -> CommonAnalog {
-    match axis {
-        Axis::LeftStickX => CommonAnalog::LeftStickX,
-        Axis::LeftStickY => CommonAnalog::LeftStickY,
-        Axis::LeftZ => CommonAnalog::LeftLever,
-        Axis::RightStickX => CommonAnalog::RightStickX,
-        Axis::RightStickY => CommonAnalog::RightStickY,
-        Axis::RightZ => CommonAnalog::RightLever,
-        Axis::DPadX => CommonAnalog::DPadX,
-        Axis::DPadY => CommonAnalog::DPadY,
-        Axis::Unknown => CommonAnalog::Unknown,
-    }
 }
