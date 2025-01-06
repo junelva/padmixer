@@ -1,11 +1,12 @@
 use std::ptr;
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
+use glib::closure_local;
 use gtk::gdk::Display;
-use gtk::glib::subclass::{Signal, SignalType};
-use gtk::glib::Type;
+use gtk::glib::subclass::Signal;
 use include_dir::{include_dir, Dir};
 use tokio::runtime::Runtime;
+use tokio::sync::Notify;
 
 use evdev::uinput::VirtualDeviceBuilder;
 use evdev::{AttributeSet, EventType, InputEvent, Key};
@@ -18,8 +19,13 @@ use gtk4_layer_shell::{Edge, Layer, LayerShell};
 mod display_widgets;
 use display_widgets::RadialMenu;
 
+mod types;
+use types::ValueStore;
+
 const APP_ID: &str = "bug.junelva.padmixer";
 static RES: Dir = include_dir!("$CARGO_MANIFEST_DIR/res");
+
+static SIGNALS: OnceLock<Vec<Signal>> = OnceLock::new();
 
 fn runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
@@ -27,6 +33,7 @@ fn runtime() -> &'static Runtime {
 }
 
 fn main() -> glib::ExitCode {
+    // platform-specific injections of libepoxy which binds the glarea for rendering
     #[cfg(target_os = "macos")]
     let library = unsafe { libloading::os::unix::Library::new("libepoxy.0.dylib") }.unwrap();
     #[cfg(all(unix, not(target_os = "macos")))]
@@ -35,21 +42,299 @@ fn main() -> glib::ExitCode {
     let library = libloading::os::windows::Library::open_already_loaded("libepoxy-0.dll")
         .or_else(|_| libloading::os::windows::Library::open_already_loaded("epoxy-0.dll"))
         .unwrap();
-
     epoxy::load_with(|name| {
         unsafe { library.get::<_>(name.as_bytes()) }
             .map(|symbol| *symbol)
             .unwrap_or(ptr::null())
     });
 
-    let app = Application::builder().application_id(APP_ID).build();
-    // app.connect_startup(|_| load_css());
-    app.connect_startup(initialize_app);
-    // app.connect_activate(initialize_app);
-    // app.connect_activate(|_| ());
+    // prepare data sending
+    // let (tx, rx) = async_channel::unbounded::<BasicControllerState>();
+    let bcs = BasicControllerState::default();
+    let bcs = RwLock::new(bcs);
+    // let mut vs = ;
+    let mut store = ValueStore::new();
+    let _radial_x = store.insert("radial_x", 50.0);
+    let _radial_y = store.insert("radial_y", 0.0);
+    let arc_store = Arc::new(Mutex::new(store));
+    // let arc_ui_store = arc_store.clone();
 
+    // let sig_update = Signal::builder("update-input-vectors")
+    //     .param_types([SignalType::from(Type::F32), SignalType::from(Type::F32)])
+    //     .build();
+
+    // let write_notify = Arc::new(Notify::new());
+    // let read_notify = write_notify.clone();
+
+    // prepare virtual keyboard (prototype style)
+    let mut keyset = AttributeSet::<Key>::new();
+    let keys = [
+        ("h", Key::KEY_H),
+        ("j", Key::KEY_J),
+        ("k", Key::KEY_K),
+        ("y", Key::KEY_Y),
+        ("u", Key::KEY_U),
+        ("i", Key::KEY_I),
+        ("o", Key::KEY_O),
+        ("p", Key::KEY_P),
+    ];
+    for key in keys.iter() {
+        keyset.insert(key.1);
+    }
+    let mut vd = VirtualDeviceBuilder::new()
+        .expect("vd new")
+        .name("USB-HID Keyboard")
+        .with_keys(&keyset)
+        .expect("vd with_keys")
+        .build()
+        .expect("vd build");
+
+    // personal logic loop that waits for pad input
+    let runtime_store_binding = arc_store.clone();
+    runtime().spawn(async move {
+        println!("spawned input thread...");
+        // let tx = tx.clone();
+
+        // let vs = RefCell::clone(&v.clone()s.to_owned());
+        println!("making input stuff...");
+        let mut gilrs = GilrsBuilder::new().set_update_state(false).build().unwrap();
+        let mut current_gamepad = None;
+        loop {
+            println!("polling input...");
+            while let Some(event) = gilrs.next_event_blocking(None) {
+                // println!("{:?}", event);
+                gilrs.update(&event);
+                current_gamepad = Some(event.id);
+                let mut bcs = bcs.write().unwrap();
+                // write_notify.notify_one();
+                match event.event {
+                    gilrs::EventType::ButtonPressed(button, _code) => {
+                        bcs.try_update_button(button_to_bcs(button), 1.0)
+                    }
+                    gilrs::EventType::ButtonRepeated(button, _code) => {
+                        bcs.try_update_button(button_to_bcs(button), 1.0)
+                    }
+                    gilrs::EventType::ButtonReleased(button, _code) => {
+                        bcs.try_update_button(button_to_bcs(button), 0.0)
+                    }
+                    gilrs::EventType::ButtonChanged(button, value, _code) => {
+                        bcs.try_update_button(button_to_bcs(button), value)
+                    }
+                    gilrs::EventType::AxisChanged(axis, value, _code) => {
+                        // let binding = ;
+                        let store = &mut *runtime_store_binding.lock().unwrap();
+                        // let store = &mut *store_borrow;
+                        if axis == Axis::RightStickX {
+                            store.get("radial_x").replace(Box::new(value), store);
+                            // radial_x.lock().unwrap().replace(Box::new(value), store);
+                        } else if axis == Axis::RightStickY {
+                            store.get("radial_y").replace(Box::new(value), store);
+                            // radial_y.lock().unwrap().replace(Box::new(value), store);
+                        }
+                        bcs.try_update_analog(axis_to_bcs(axis), value);
+                        // if let Some(sigs) = SIGNALS.get() {
+                        //     for sig in sigs.iter() {
+                        //         if sig.name().eq("update-input-vectors")
+                        //     }
+                        // }
+                        // gtk::Box::emit(&Box::new_uninit(), ;
+                    }
+                    gilrs::EventType::Connected => (),
+                    gilrs::EventType::Disconnected => (),
+                    gilrs::EventType::Dropped => (),
+                    gilrs::EventType::ForceFeedbackEffectCompleted => (),
+                    _ => (),
+                }
+            }
+            if current_gamepad.is_some() {
+                let gp = gilrs.gamepad(current_gamepad.unwrap());
+                let st = gp.state();
+                let but_x = st.button_data(Gamepad::button_code(&gp, Button::West).unwrap());
+                if but_x.is_some() {
+                    let but_x = but_x.unwrap();
+                    if but_x.is_pressed() {
+                        let ie = InputEvent::new(EventType::KEY, Key::KEY_H.code(), 1);
+                        let res = vd.emit(&[ie]);
+                        if res.is_err() {
+                            println!("{:?}", res);
+                        }
+                    } else {
+                        let ie = InputEvent::new(EventType::KEY, Key::KEY_H.code(), 0);
+                        let res = vd.emit(&[ie]);
+                        if res.is_err() {
+                            println!("{:?}", res);
+                        }
+                    }
+                }
+            }
+            // let b = *bcs.read().unwrap();
+            // let mut store_borrow = store.borrow_mut();
+            // let store = store_borrow.deref_mut();
+            // vs.get("x").repl
+            // let res = tx.send(b).await;
+            // if res.is_err() {};
+        }
+    });
+
+    // #[derive(Copy, Clone)]
+    // struct UIValues {
+    //     x: f32,
+    //     y: f32,
+    // }
+    // let rasync =
+    //     Arc::<Mutex<Box<UIValues>>>::new(Mutex::new(Box::new(UIValues { x: 0.0, y: 0.0 })));
+    // let rv = rasync.clone();
+    // runtime().spawn({
+    // let rx = rx.clone();
+    // println!("spawned ui update thread...");
+    // let radial = rasync.lock().unwrap();
+    //     async move {
+    //         if let Ok(rec) = rx.recv().await {
+    //             let mut rv = rv.lock().unwrap();
+    //             // let rv = rv.borrow_mut();
+    //             rv.x = rec.analogs[3].value;
+    //             rv.y = rec.analogs[4].value;
+    //             // rv = &mut [rec.analogs[3].value, rec.analogs[4].value];
+    //             // rv[0] = rec.analogs[3].value;
+    //             // rv[1] = rec.analogs[4].value;
+    //         }
+    //     }
+    // });
+
+    let app = Application::builder().application_id(APP_ID).build();
+    app.connect_startup(|_| {
+        // load gtk css. using this style to hide window backdrop
+        // window {
+        //     background-color: rgba(0, 0, 0, 0);
+        // }
+        let provider = CssProvider::new();
+        provider.load_from_string(RES.get_file("style.css").unwrap().contents_utf8().unwrap());
+        gtk::style_context_add_provider_for_display(
+            &Display::default().expect("display default"),
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    });
+
+    // let mut xbox = Box::new(50.0);
+    // let mut ybox = Box::new(25.0);
+    // runtime().spawn(async {
+    //     read_notify.notified().await;
+    //     let store = arc_store.clone();
+    //     let store = store.lock().unwrap();
+    //     let x_value = radial_x.lock().unwrap();
+    //     let x_opt = x_value.load(&store).as_any().downcast_ref::<f32>();
+    //     if let Some(new_x) = x_opt {
+    //         xbox = Box::new(*new_x);
+    //     }
+
+    //     let y_value = radial_y.lock().unwrap();
+    //     let y_opt = y_value.load(&store).as_any().downcast_ref::<f32>();
+    //     if let Some(new_y) = y_opt {
+    //         ybox = Box::new(*new_y);
+    //     }
+    // });
+
+    app.connect_activate(move |app| {
+        // window surface
+        let window = gtk::ApplicationWindow::new(app);
+        let window_native = window.native().unwrap();
+        window.set_title(Some("padmixer (in-development build)"));
+        window.init_layer_shell();
+        window.set_layer(Layer::Overlay);
+        window.set_size_request(380, 380);
+        window.set_margin(Edge::Bottom, 40);
+        window.set_margin(Edge::Right, 40);
+        let anchors = [
+            (Edge::Left, false),
+            (Edge::Top, false),
+            (Edge::Right, true),
+            (Edge::Bottom, true),
+        ];
+        for (anchor, state) in anchors {
+            window.set_anchor(anchor, state);
+        }
+
+        let radial = RadialMenu::default();
+        radial.connect_closure(
+            "update-input-vectors",
+            false,
+            closure_local!(move |x: f32, y: f32| {
+                println!("these values are in the ui activate function. {}, {}", x, y);
+            }),
+        );
+        // radial.set_x(50.0);
+        // radial.set_y(0.0);
+
+        // let store = ui_store_binding.lock().unwrap();
+        // let x = store
+        //     .get("radial_x")
+        //     .load(&store)
+        //     .as_any()
+        //     .downcast_ref::<f32>()
+        //     .unwrap();
+
+        // let y = store
+        //     .get("radial_y")
+        //     .load(&store)
+        //     .as_any()
+        //     .downcast_ref::<f32>()
+        //     .unwrap();
+
+        window.set_child(Some(&radial));
+        window.present();
+
+        // now that window is presented, nullify its input region
+        let surface = window_native.surface();
+        if surface.is_some() {
+            let surface = surface.unwrap();
+            let input_region = gtk::cairo::Region::create();
+            surface.set_input_region(&input_region);
+        } else {
+            println!("unable to disallow input region due to lack of surface on window");
+        }
+    });
     app.run()
 }
+
+// fn initialize_app(app: &Application) {
+//     // window surface
+//     let window = gtk::ApplicationWindow::new(app);
+//     let window_native = window.native().unwrap();
+//     window.set_title(Some("padmixer (in-development build)"));
+//     window.init_layer_shell();
+//     window.set_layer(Layer::Overlay);
+//     window.set_size_request(380, 380);
+//     window.set_margin(Edge::Bottom, 40);
+//     window.set_margin(Edge::Right, 40);
+//     let anchors = [
+//         (Edge::Left, false),
+//         (Edge::Top, false),
+//         (Edge::Right, true),
+//         (Edge::Bottom, true),
+//     ];
+//     for (anchor, state) in anchors {
+//         window.set_anchor(anchor, state);
+//     }
+
+//     // let sig = Signal::builder("update-widget")
+//     //     .param_types([SignalType::from(Type::F32), SignalType::from(Type::F32)])
+//     //     .build();
+
+//     let radial = RadialMenu::default();
+//     window.set_child(Some(&radial));
+//     window.present();
+
+//     let surface = window_native.surface();
+
+//     if surface.is_some() {
+//         let surface = surface.unwrap();
+//         let input_region = gtk::cairo::Region::create();
+//         surface.set_input_region(&input_region);
+//     } else {
+//         println!("unable to disallow input region due to lack of surface on window");
+//     }
+// }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum CommonAnalog {
@@ -261,250 +546,4 @@ fn axis_to_bcs(axis: Axis) -> CommonAnalog {
         Axis::DPadY => CommonAnalog::DPadY,
         Axis::Unknown => CommonAnalog::Unknown,
     }
-}
-
-fn initialize_app(app: &Application) {
-    // load css
-    let provider = CssProvider::new();
-    provider.load_from_string(RES.get_file("style.css").unwrap().contents_utf8().unwrap());
-    gtk::style_context_add_provider_for_display(
-        &Display::default().expect("display default"),
-        &provider,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
-
-    // prepare data sending
-    // let (sender, receiver) = async_channel::unbounded::<BasicControllerState>();
-    let bcs = BasicControllerState::default();
-    let bcs = RwLock::new(bcs);
-
-    // prepare virtual keyboard (prototype style)
-    let mut keyset = AttributeSet::<Key>::new();
-    let keys = [
-        ("h", Key::KEY_H),
-        ("j", Key::KEY_J),
-        ("k", Key::KEY_K),
-        ("y", Key::KEY_Y),
-        ("u", Key::KEY_U),
-        ("i", Key::KEY_I),
-        ("o", Key::KEY_O),
-        ("p", Key::KEY_P),
-    ];
-    for key in keys.iter() {
-        keyset.insert(key.1);
-    }
-    let mut vd = VirtualDeviceBuilder::new()
-        .expect("vd new")
-        .name("USB-HID Keyboard")
-        .with_keys(&keyset)
-        .expect("vd with_keys")
-        .build()
-        .expect("vd build");
-
-    // window surface
-    let window = gtk::ApplicationWindow::new(app);
-    let window_native = window.native().unwrap();
-    window.set_title(Some("padmixer (in-development build)"));
-    window.init_layer_shell();
-    window.set_layer(Layer::Overlay);
-    window.set_size_request(380, 380);
-    window.set_margin(Edge::Bottom, 40);
-    window.set_margin(Edge::Right, 40);
-    let anchors = [
-        (Edge::Left, false),
-        (Edge::Top, false),
-        (Edge::Right, true),
-        (Edge::Bottom, true),
-    ];
-    for (anchor, state) in anchors {
-        window.set_anchor(anchor, state);
-    }
-
-    let sig = Signal::builder("update-widget")
-        .param_types([SignalType::from(Type::F32), SignalType::from(Type::F32)])
-        .build();
-    // let (x, y) = (0.5, 0.5);
-
-    let radial = RadialMenu::default();
-    // {
-    //     // let bcs = bcs.read().unwrap();
-    //     radial.set_size_request(380, 380);
-    //     radial.connect_closure(
-    //         "update-widget",
-    //         true,
-    //         RustClosure::new_local(move |values| {
-    //             assert_eq!(
-    //                 values.len(),
-    //                 1usize,
-    //                 "Expected {} arguments but got {}",
-    //                 1usize,
-    //                 values.len(),
-    //             );
-    //             let value0 = ::core::result::Result::unwrap_or_else(
-    //                 glib::Value::get(&values[0usize]),
-    //                 |e| panic!("Wrong type for argument 0: {:?}", e),
-    //             );
-    //             (|mut obj: RadialMenu| {
-    //                 obj.update_values(50.0, 50.0);
-    //                 println!("called ui update closure...");
-    //             })(value0);
-    //             glib::closure::IntoClosureReturnValue::into_closure_return_value(())
-    //         }),
-    //     );
-    // }
-    // runtime().spawn({
-    //     println!("spawned receiver thread...");
-    //     let receiver = receiver.clone();
-    //     async move {
-    //         let bcs = receiver.recv().await.expect("recv bcs");
-    //         radial.update_values(bcs);
-    //     }
-    // });
-    window.set_child(Some(&radial));
-    window.present();
-
-    let surface = window_native.surface();
-
-    if surface.is_some() {
-        let surface = surface.unwrap();
-        let input_region = gtk::cairo::Region::create();
-        surface.set_input_region(&input_region);
-    } else {
-        println!("unable to disallow input region due to lack of surface on window");
-    }
-
-    // personal logic loop that waits for pad input
-    // println!("connected to pad: {}", gilrs.gamepad(event.id).name());
-    runtime().spawn({
-        println!("spawned input thread...");
-        // let sender = sender.clone();
-        async move {
-            println!("making input stuff...");
-            let mut gilrs = GilrsBuilder::new().set_update_state(false).build().unwrap();
-            let mut current_gamepad = None;
-            loop {
-                println!("polling input...");
-                while let Some(event) = gilrs.next_event_blocking(None) {
-                    println!("{:?}", event);
-                    gilrs.update(&event);
-                    current_gamepad = Some(event.id);
-                    let mut bcs = bcs.write().unwrap();
-                    match event.event {
-                        gilrs::EventType::ButtonPressed(button, _code) => {
-                            bcs.try_update_button(button_to_bcs(button), 1.0)
-                        }
-                        gilrs::EventType::ButtonRepeated(button, _code) => {
-                            bcs.try_update_button(button_to_bcs(button), 1.0)
-                        }
-                        gilrs::EventType::ButtonReleased(button, _code) => {
-                            bcs.try_update_button(button_to_bcs(button), 0.0)
-                        }
-                        gilrs::EventType::ButtonChanged(button, value, _code) => {
-                            bcs.try_update_button(button_to_bcs(button), value)
-                        }
-                        gilrs::EventType::AxisChanged(axis, value, _code) => {
-                            bcs.try_update_analog(axis_to_bcs(axis), value)
-                        }
-                        gilrs::EventType::Connected => (),
-                        gilrs::EventType::Disconnected => (),
-                        gilrs::EventType::Dropped => (),
-                        gilrs::EventType::ForceFeedbackEffectCompleted => (),
-                        _ => (),
-                    }
-                }
-                if current_gamepad.is_some() {
-                    let gp = gilrs.gamepad(current_gamepad.unwrap());
-                    let st = gp.state();
-                    let but_x = st.button_data(Gamepad::button_code(&gp, Button::West).unwrap());
-                    if but_x.is_some() {
-                        let but_x = but_x.unwrap();
-                        if but_x.is_pressed() {
-                            let ie = InputEvent::new(EventType::KEY, Key::KEY_H.code(), 1);
-                            let res = vd.emit(&[ie]);
-                            if res.is_err() {
-                                println!("{:?}", res);
-                            }
-                        } else {
-                            let ie = InputEvent::new(EventType::KEY, Key::KEY_H.code(), 0);
-                            let res = vd.emit(&[ie]);
-                            if res.is_err() {
-                                println!("{:?}", res);
-                            }
-                        }
-                    }
-                }
-                // let b = *bcs.read().unwrap();
-                // let res = sender.send(b).await;
-                // if res.is_err() {};
-            }
-        }
-    });
-
-    // glib::spawn_future_local(async move {
-    //     while let Ok(bcs) = receiver.recv().await {
-    //         radial.update_values(bcs);
-    //         radial.queue_render();
-    //     }
-    // });
-
-    // runtime().spawn_blocking(|| {
-    //     async move {
-    //         let mut current_gamepad = None;
-    //         loop {
-    //             while let Some(event) = gilrs.next_event_blocking(None) {
-    //                 gilrs.update(&event);
-    //                 if current_gamepad.is_none() {
-    //                     let mut bcs = bcs.write().unwrap();
-    //                     match event.event {
-    //                         gilrs::EventType::ButtonPressed(button, _code) => {
-    //                             bcs.try_update_button(button_to_bcs(button), 1.0)
-    //                         }
-    //                         gilrs::EventType::ButtonRepeated(button, _code) => {
-    //                             // TODO: handle button repeated properly
-    //                             bcs.try_update_button(button_to_bcs(button), 1.0)
-    //                         }
-    //                         gilrs::EventType::ButtonReleased(button, _code) => {
-    //                             bcs.try_update_button(button_to_bcs(button), 0.0)
-    //                         }
-    //                         gilrs::EventType::ButtonChanged(button, value, _code) => {
-    //                             bcs.try_update_button(button_to_bcs(button), value)
-    //                         }
-    //                         gilrs::EventType::AxisChanged(axis, value, _code) => {
-    //                             bcs.try_update_analog(axis_to_bcs(axis), value)
-    //                         }
-    //                         gilrs::EventType::Connected => (),
-    //                         gilrs::EventType::Disconnected => (),
-    //                         gilrs::EventType::Dropped => (),
-    //                         gilrs::EventType::ForceFeedbackEffectCompleted => (),
-    //                         _ => todo!(),
-    //                     }
-    //                     println!("connected to pad: {}", gilrs.gamepad(event.id).name());
-    //                     current_gamepad = Some(event.id);
-    //                 }
-    //             }
-    //             if current_gamepad.is_none() {
-    //             } else {
-    //                 let gp = gilrs.gamepad(current_gamepad.unwrap());
-    //                 let st = gp.state();
-    //                 let but_x = st.button_data(Gamepad::button_code(&gp, Button::West).unwrap());
-    //                 if but_x.is_some() {
-    //                     let but_x = but_x.unwrap();
-    //                     if but_x.is_pressed() {
-    //                         let ie = InputEvent::new(EventType::KEY, Key::KEY_H.code(), 1);
-    //                         let res = vd.emit(&[ie]);
-    //                         if res.is_err() {
-    //                             println!("{:?}", res);
-    //                         }
-    //                     } else {
-    //                         let ie = InputEvent::new(EventType::KEY, Key::KEY_H.code(), 0);
-    //                         let res = vd.emit(&[ie]);
-    //                         if res.is_err() {
-    //                             println!("{:?}", res);
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    // });
 }

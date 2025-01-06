@@ -5,18 +5,23 @@ use std::{
 };
 
 use femtovg::CompositeOperation;
-use gtk::glib::subclass::prelude::*;
+use gtk::glib::{
+    subclass::{prelude::*, Signal, SignalType},
+    Type,
+};
 use gtk::{glib, glib::Properties, prelude::*, subclass::prelude::*};
+
+use crate::SIGNALS;
 
 #[derive(Properties)]
 #[properties(wrapper_type = super::RadialMenu)]
 pub struct RadialMenu {
     canvas: RefCell<Option<femtovg::Canvas<femtovg::renderer::OpenGl>>>,
     start_time: Cell<Instant>,
-    #[property(set, type = f32)]
-    px: RefCell<f32>,
-    #[property(set, type = f32)]
-    py: RefCell<f32>,
+    #[property(name = "x", set, type = f32)]
+    x: RefCell<f32>,
+    #[property(name = "y", set, type = f32)]
+    y: RefCell<f32>,
 }
 
 impl Default for RadialMenu {
@@ -24,8 +29,8 @@ impl Default for RadialMenu {
         Self {
             canvas: Default::default(),
             start_time: Cell::new(Instant::now()),
-            px: RefCell::new(0.0),
-            py: RefCell::new(0.0),
+            x: RefCell::new(0.0),
+            y: RefCell::new(0.0),
         }
     }
 }
@@ -37,7 +42,16 @@ impl ObjectSubclass for RadialMenu {
     type ParentType = gtk::GLArea;
 }
 
+#[glib::derived_properties]
 impl ObjectImpl for RadialMenu {
+    fn signals() -> &'static [Signal] {
+        SIGNALS.get_or_init(|| {
+            vec![Signal::builder("update-input-vectors")
+                .param_types([SignalType::from(Type::F32), SignalType::from(Type::F32)])
+                .build()]
+        })
+    }
+
     fn constructed(&self) {
         self.parent_constructed();
         let area = self.obj();
@@ -84,21 +98,28 @@ impl GLAreaImpl for RadialMenu {
         let h = area.height() as u32;
         canvas.reset_transform();
         canvas.global_composite_operation(CompositeOperation::Copy);
-        // canvas.clear_rect(0, 0, w, h, Color::rgba(0, 0, 0, 0));
+        canvas.clear_rect(0, 0, w, h, Color::rgba(0, 0, 0, 0));
 
         canvas.translate(w as f32 / 2., h as f32 / 2.);
+        canvas.rotate(self.start_time.get().elapsed().as_secs_f32() * 0.01);
 
         let mut path = Path::new();
-        path.circle(0.0, 0.0, self.start_time.get().elapsed().as_secs_f32());
+        path.circle(0.0, 0.0, w as f32 * 0.45);
         path.close();
         let mut paint = Paint::color(Color::rgba(128, 128, 225, 128));
         paint.set_line_width(4.);
         canvas.stroke_path(&path, &paint);
 
         let mut path = Path::new();
-        path.circle(*self.px.borrow() * 120.0, *self.py.borrow() * 120.0, 40.0);
+        let x = *self.x.borrow();
+        path.circle(x, 0.0, 40.0);
+        // path.circle(
+        //     *self.x.borrow() * (w / 2) as f32,
+        //     *self.y.borrow() * (h / 2) as f32,
+        //     40.0,
+        // );
         path.close();
-        let mut paint = Paint::color(Color::rgba(178, 178, 225, 178));
+        let mut paint = Paint::color(Color::rgba(178, 0, 225, 200));
         paint.set_line_width(2.);
         canvas.stroke_path(&path, &paint);
 
@@ -139,5 +160,12 @@ impl RadialMenu {
         renderer.set_screen_target(Some(fbo));
         let canvas = Canvas::new(renderer).expect("Cannot create canvas");
         self.canvas.replace(Some(canvas));
+    }
+
+    pub fn update_values(&mut self, x: f32, y: f32) {
+        println!("updating properties on the thing...");
+        // let analogs = bcs.analogs;
+        self.x = RefCell::new(x);
+        self.y = RefCell::new(y);
     }
 }
