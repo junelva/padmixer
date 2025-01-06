@@ -6,7 +6,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub trait ListItemData: 'static + Send + ToAny + std::fmt::Display {}
+pub trait ListItemData: 'static + Send + Sync + ToAny + std::fmt::Display {}
 
 pub struct ValueStore {
     pub map: HashMap<String, Box<dyn ListItemData>>,

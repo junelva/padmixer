@@ -1,12 +1,11 @@
+use std::borrow::BorrowMut;
 use std::ptr;
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
-use glib::closure_local;
 use gtk::gdk::Display;
 use gtk::glib::subclass::Signal;
 use include_dir::{include_dir, Dir};
 use tokio::runtime::Runtime;
-use tokio::sync::Notify;
 
 use evdev::uinput::VirtualDeviceBuilder;
 use evdev::{AttributeSet, EventType, InputEvent, Key};
@@ -49,22 +48,13 @@ fn main() -> glib::ExitCode {
     });
 
     // prepare data sending
-    // let (tx, rx) = async_channel::unbounded::<BasicControllerState>();
     let bcs = BasicControllerState::default();
     let bcs = RwLock::new(bcs);
-    // let mut vs = ;
+
     let mut store = ValueStore::new();
-    let _radial_x = store.insert("radial_x", 50.0);
-    let _radial_y = store.insert("radial_y", 0.0);
+    let radial_x = store.insert("radial_x", 50.0);
+    let radial_y = store.insert("radial_y", 0.0);
     let arc_store = Arc::new(Mutex::new(store));
-    // let arc_ui_store = arc_store.clone();
-
-    // let sig_update = Signal::builder("update-input-vectors")
-    //     .param_types([SignalType::from(Type::F32), SignalType::from(Type::F32)])
-    //     .build();
-
-    // let write_notify = Arc::new(Notify::new());
-    // let read_notify = write_notify.clone();
 
     // prepare virtual keyboard (prototype style)
     let mut keyset = AttributeSet::<Key>::new();
@@ -90,23 +80,18 @@ fn main() -> glib::ExitCode {
         .expect("vd build");
 
     // personal logic loop that waits for pad input
-    let runtime_store_binding = arc_store.clone();
+    let mut runtime_store_binding = arc_store.clone();
+    // let runtime_store = *runtime_store_binding.lock().unwrap();
     runtime().spawn(async move {
         println!("spawned input thread...");
-        // let tx = tx.clone();
-
-        // let vs = RefCell::clone(&v.clone()s.to_owned());
-        println!("making input stuff...");
         let mut gilrs = GilrsBuilder::new().set_update_state(false).build().unwrap();
         let mut current_gamepad = None;
         loop {
             println!("polling input...");
             while let Some(event) = gilrs.next_event_blocking(None) {
-                // println!("{:?}", event);
                 gilrs.update(&event);
                 current_gamepad = Some(event.id);
                 let mut bcs = bcs.write().unwrap();
-                // write_notify.notify_one();
                 match event.event {
                     gilrs::EventType::ButtonPressed(button, _code) => {
                         bcs.try_update_button(button_to_bcs(button), 1.0)
@@ -121,23 +106,16 @@ fn main() -> glib::ExitCode {
                         bcs.try_update_button(button_to_bcs(button), value)
                     }
                     gilrs::EventType::AxisChanged(axis, value, _code) => {
-                        // let binding = ;
-                        let store = &mut *runtime_store_binding.lock().unwrap();
-                        // let store = &mut *store_borrow;
+                        let store = runtime_store_binding.borrow_mut();
+                        let mut store = store.lock().unwrap();
                         if axis == Axis::RightStickX {
-                            store.get("radial_x").replace(Box::new(value), store);
-                            // radial_x.lock().unwrap().replace(Box::new(value), store);
+                            store.get("radial_x").replace(Box::new(value), &mut store);
+                            println!("insert to radial_x in store: {}", value);
                         } else if axis == Axis::RightStickY {
-                            store.get("radial_y").replace(Box::new(value), store);
-                            // radial_y.lock().unwrap().replace(Box::new(value), store);
+                            store.get("radial_y").replace(Box::new(value), &mut store);
+                            println!("insert to radial_y in store: {}", value);
                         }
                         bcs.try_update_analog(axis_to_bcs(axis), value);
-                        // if let Some(sigs) = SIGNALS.get() {
-                        //     for sig in sigs.iter() {
-                        //         if sig.name().eq("update-input-vectors")
-                        //     }
-                        // }
-                        // gtk::Box::emit(&Box::new_uninit(), ;
                     }
                     gilrs::EventType::Connected => (),
                     gilrs::EventType::Disconnected => (),
@@ -216,8 +194,6 @@ fn main() -> glib::ExitCode {
         );
     });
 
-    // let mut xbox = Box::new(50.0);
-    // let mut ybox = Box::new(25.0);
     // runtime().spawn(async {
     //     read_notify.notified().await;
     //     let store = arc_store.clone();
@@ -255,17 +231,15 @@ fn main() -> glib::ExitCode {
             window.set_anchor(anchor, state);
         }
 
-        let radial = RadialMenu::default();
-        radial.connect_closure(
-            "update-input-vectors",
-            false,
-            closure_local!(move |x: f32, y: f32| {
-                println!("these values are in the ui activate function. {}, {}", x, y);
-            }),
-        );
+        // radial.connect_closure(
+        //     "update-input-vectors",
+        //     false,
+        //     closure_local!(move |x: f32, y: f32| {
+        //         println!("these values are in the ui activate function. {}, {}", x, y);
+        //     }),
+        // );
         // radial.set_x(50.0);
         // radial.set_y(0.0);
-
         // let store = ui_store_binding.lock().unwrap();
         // let x = store
         //     .get("radial_x")
@@ -273,13 +247,44 @@ fn main() -> glib::ExitCode {
         //     .as_any()
         //     .downcast_ref::<f32>()
         //     .unwrap();
-
         // let y = store
         //     .get("radial_y")
         //     .load(&store)
         //     .as_any()
         //     .downcast_ref::<f32>()
         //     .unwrap();
+        let radial = RadialMenu::default();
+        let rxc = radial_x.clone();
+        let ryc = radial_y.clone();
+        let store = arc_store.clone();
+        radial.add_tick_callback(move |wdg, _clk| {
+            // area.queue_render();
+            let store = store.lock().unwrap();
+
+            let mut x = 0.0;
+            let x_value = rxc.lock().unwrap();
+            let x_opt = x_value.load(&store).as_any().downcast_ref::<f32>();
+            if let Some(new_x) = x_opt {
+                x = *new_x;
+            } else {
+                println!("x might be nothing");
+            }
+
+            let mut y = 0.0;
+            let y_value = ryc.lock().unwrap();
+            let y_opt = y_value.load(&store).as_any().downcast_ref::<f32>();
+            if let Some(new_y) = y_opt {
+                y = *new_y;
+            } else {
+                println!("y might be nothing");
+            }
+
+            wdg.set_x(x);
+            wdg.set_y(y);
+
+            glib::ControlFlow::Continue
+        });
+        // radial.add_tick_callback(move || {});
 
         window.set_child(Some(&radial));
         window.present();

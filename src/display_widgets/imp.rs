@@ -103,6 +103,7 @@ impl GLAreaImpl for RadialMenu {
         canvas.translate(w as f32 / 2., h as f32 / 2.);
         canvas.rotate(self.start_time.get().elapsed().as_secs_f32() * 0.01);
 
+        // outer circle
         let mut path = Path::new();
         path.circle(0.0, 0.0, w as f32 * 0.45);
         path.close();
@@ -110,23 +111,16 @@ impl GLAreaImpl for RadialMenu {
         paint.set_line_width(4.);
         canvas.stroke_path(&path, &paint);
 
+        // inner circle (meant to move with input values)
         let mut path = Path::new();
         let x = *self.x.borrow();
         path.circle(x, 0.0, 40.0);
-        // path.circle(
-        //     *self.x.borrow() * (w / 2) as f32,
-        //     *self.y.borrow() * (h / 2) as f32,
-        //     40.0,
-        // );
         path.close();
         let mut paint = Paint::color(Color::rgba(178, 0, 225, 200));
         paint.set_line_width(2.);
         canvas.stroke_path(&path, &paint);
 
-        // let r = (n - DEFAULT_N as f32) / (MAX_N - DEFAULT_N) as f32;
-        // canvas.fill_path(&path, &Paint::color(Color::rgba(0, 255, 0, 128)));
         canvas.flush();
-
         glib::Propagation::Stop
     }
 }
@@ -164,7 +158,6 @@ impl RadialMenu {
 
     pub fn update_values(&mut self, x: f32, y: f32) {
         println!("updating properties on the thing...");
-        // let analogs = bcs.analogs;
         self.x = RefCell::new(x);
         self.y = RefCell::new(y);
     }
